@@ -1425,3 +1425,16 @@ button {
 }
 .payment-footer-totals { display: flex; gap: 18px; font-size: 0.84rem; color: var(--text-muted); }
 .payment-footer-totals strong { color: var(--text); font-weight: 700; margin-left: 4px; }
+
+/* Iqama Expense: Posting Date picker in the actions row */
+.posting-date-field { margin-right: auto; display: flex; align-items: center; gap: 8px; }
+.posting-date-field label { font-size: 0.84rem; font-weight: 700; color: var(--text-muted); white-space: nowrap; }
+.posting-date-input {
+  border: 1px solid rgba(8, 55, 38, 0.18);
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: white;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+.posting-date-input.input-error { border-color: #c0392b; background: #fdf3f2; }

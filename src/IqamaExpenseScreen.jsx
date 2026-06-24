@@ -3,10 +3,11 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { ArrowRight, Download, Trash2, Upload } from 'lucide-react';
 import { IQAMA_COLUMNS, IQAMA_EXPENSE_TYPES, IQAMA_NUMBER_LENGTH, iqamaRowActive, validateIqamaItem } from './sadadValidation';
-import { formatMoney } from './utils';
+import { formatMoney, getTodayISO } from './utils';
 
 export function IqamaExpenseScreen({ setBanner }) {
   const [items, setItems] = useState([]);
+  const [postingDate, setPostingDate] = useState(getTodayISO());
   const [focusId, setFocusId] = useState(null);
   const newRowRef = useRef(null);
 
@@ -156,25 +157,42 @@ export function IqamaExpenseScreen({ setBanner }) {
 
   const errorCount = items.filter((it) => Object.keys(validateIqamaItem(it)).length > 0).length;
 
-  // Postable only when there is at least one line item, every row is filled (active),
-  // and no row has any validation error.
+  // Postable only when there is at least one line item, a posting date is set,
+  // every row is filled (active), and no row has any validation error.
   const canPost =
     items.length > 0 &&
+    postingDate.trim() !== '' &&
     items.every((it) => iqamaRowActive(it) && Object.keys(validateIqamaItem(it)).length === 0);
 
   const handlePostToSAP = () => {
+    if (!postingDate.trim()) {
+      setBanner('Please select a Posting Date before posting to SAP.');
+      return;
+    }
     if (!canPost) {
       setBanner('Cannot post to SAP. Fix the highlighted errors and remove any empty line items first.');
       return;
     }
     const count = items.length;
     setItems([]);
-    setBanner(`Posted to SAP successfully! ${count} line item(s) posted. You can start a new upload.`);
+    setBanner(`Posted to SAP successfully! ${count} line item(s) posted with posting date ${postingDate}. You can start a new upload.`);
   };
 
   return (
     <>
       <div className="sadad-actions">
+        <div className="posting-date-field">
+          <label htmlFor="iqama-posting-date">
+            Posting Date <span className="req-star">*</span>
+          </label>
+          <input
+            id="iqama-posting-date"
+            type="date"
+            className={postingDate ? 'posting-date-input' : 'posting-date-input input-error'}
+            value={postingDate}
+            onChange={(ev) => setPostingDate(ev.target.value)}
+          />
+        </div>
         <button type="button" className="secondary-button" onClick={handleDownloadTemplate}>
           <Download size={18} /> Download Template
         </button>
