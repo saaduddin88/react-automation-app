@@ -159,3 +159,19 @@ export const TRANSFER_TO_BANKS = {
 
 export const BANK_NAMES = ['RJHI', 'SAB', 'BSF'];
 
+
+// Hardcoded cost centers for the Finance Accountant step (placeholder set).
+export const COST_CENTERS = [
+  'CC-1001 — Administration',
+  'CC-1002 — Information Technology',
+  'CC-1003 — Operations',
+  'CC-1004 — Finance & Accounts',
+  'CC-1005 — Strategy & Planning',
+];
+
+// Hardcoded company codes for the Finance Accountant step (placeholder set).
+export const COMPANY_CODES = [
+  '1000 — Ibrahim Shaker Co. Ltd.',
+  '2000 — Shaker Trading',
+  '3000 — Shaker Services',
+];

@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
-import { AlertTriangle, ArrowRight, Check, Download, Edit3, Trash2, Upload } from 'lucide-react';
-import { ASSET_CATEGORIES, ASSET_DETAIL_COLUMNS, ASSET_UPLOAD_COLUMNS, BUDGET_MATRIX, DEPARTMENTS } from './constants';
+import { AlertTriangle, ArrowRight, Check, ChevronDown, Download, Edit3, Layers, Trash2, Upload } from 'lucide-react';
+import { ASSET_CATEGORIES, ASSET_DETAIL_COLUMNS, ASSET_UPLOAD_COLUMNS, BUDGET_MATRIX, COMPANY_CODES, COST_CENTERS, DEPARTMENTS } from './constants';
 import { badgeClassForStatus, buildAssetApprovalTrail, formatAmount, getCurrentFiscalYear, getModeForStatus, getProgressForStatus, normalizeExcelRow, parseAmount } from './utils';
 
 export function AssetRequisitionPage({ rows, setRows, setBanner, assetRequests, setAssetRequests }) {
@@ -491,7 +491,21 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
   }
 
   const isEditable = request.status === 'Pending for Procurement' || request.status === 'Pending for HOD approval';
-  const canApproveByHOD = request.status === 'Pending for HOD approval';
+
+  // Sequential approval stages — each shares the same approve/reject behaviour.
+  const APPROVAL_STAGES = {
+    'Pending for HOD approval': { tsField: 'hodApprovedAt', next: 'Pending for Director HR/Admin approval', step: 'Head of Department', label: 'HOD' },
+    'Pending for Director HR/Admin approval': { tsField: 'directorApprovedAt', next: 'Pending for Finance head approval', step: 'Director HR/Admin', label: 'Director' },
+    'Pending for Finance head approval': { tsField: 'financeHeadApprovedAt', next: 'Pending for VP Strategy approval', step: 'Finance Head', label: 'Finance Head' },
+    'Pending for VP Strategy approval': { tsField: 'vpStrategyApprovedAt', next: 'Pending for Accountant approval', step: 'VP Strategy', label: 'VP Strategy' },
+  };
+  const stage = APPROVAL_STAGES[request.status];
+  const isAccountantStage = request.status === 'Pending for Accountant approval';
+  const [costCenter, setCostCenter] = useState(request.costCenter || '');
+  const [companyCode, setCompanyCode] = useState(request.companyCode || '');
+  // Line items are expanded while the list is being built (Procurement) and
+  // collapsed from HOD approval onward; anyone can expand to inspect details.
+  const [lineItemsOpen, setLineItemsOpen] = useState(request.status === 'Pending for Procurement');
 
   const updateAmount = (rowId, value) => {
     setDraftRows((current) => ({
@@ -501,6 +515,69 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
         Amount: value,
       },
     }));
+  };
+
+  const applyToRequest = (mutate, message) => {
+    setAssetRequests((current) =>
+      current.map((item) => {
+        if (item.id !== request.id) return item;
+        const updated = mutate({ ...item });
+        updated.approvalTrail = buildAssetApprovalTrail(updated, updated.status, updated.__now);
+        updated.progress = getProgressForStatus(updated.status);
+        updated.mode = getModeForStatus(updated.status);
+        delete updated.__now;
+        return updated;
+      })
+    );
+    if (message) setBanner(message);
+  };
+
+  const approveCurrentStage = () => {
+    if (!stage) return;
+    const now = new Date().toLocaleString();
+    applyToRequest(
+      (item) => {
+        item[stage.tsField] = now;
+        item.status = stage.next;
+        item.__now = now;
+        return item;
+      },
+      `Asset request ${request.id} approved by ${stage.label}.`
+    );
+  };
+
+  const declineCurrentStage = () => {
+    if (!stage) return;
+    const now = new Date().toLocaleString();
+    applyToRequest(
+      (item) => {
+        item.status = 'Declined';
+        item.declinedAt = now;
+        item.declinedAtStep = stage.step;
+        item.__now = now;
+        return item;
+      },
+      `Asset request ${request.id} rejected by ${stage.label}.`
+    );
+  };
+
+  const submitByAccountant = () => {
+    if (!companyCode || !costCenter) {
+      setBanner('Please select both a Company Code and a Cost Center before saving.');
+      return;
+    }
+    const now = new Date().toLocaleString();
+    applyToRequest(
+      (item) => {
+        item.status = 'Complete';
+        item.financeAccountantCompletedAt = now;
+        item.companyCode = companyCode;
+        item.costCenter = costCenter;
+        item.__now = now;
+        return item;
+      },
+      `Asset request ${request.id} completed — Company Code ${companyCode}, Cost Center ${costCenter}.`
+    );
   };
 
   const saveAndSendToHOD = () => {
@@ -540,65 +617,6 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
     setBanner(`Asset request ${request.id} saved and sent to HOD.`);
   };
 
-  const approveByHOD = () => {
-    const now = new Date().toLocaleString();
-    const nextStatus = 'Pending for Director HR/Admin approval';
-
-    setAssetRequests((current) =>
-      current.map((item) =>
-        item.id === request.id
-          ? {
-              ...item,
-              status: nextStatus,
-              hodApprovedAt: now,
-              approvalTrail: buildAssetApprovalTrail(
-                {
-                  ...item,
-                  hodApprovedAt: now,
-                },
-                nextStatus,
-                now
-              ),
-              progress: getProgressForStatus(nextStatus),
-              mode: getModeForStatus(nextStatus),
-            }
-          : item
-      )
-    );
-
-    setBanner(`Asset request ${request.id} approved by HOD.`);
-  };
-
-  const declineByHOD = () => {
-    const now = new Date().toLocaleString();
-
-    setAssetRequests((current) =>
-      current.map((item) =>
-        item.id === request.id
-          ? {
-              ...item,
-              status: 'Declined',
-              declinedAt: now,
-              declinedAtStep: 'Head of Department',
-              approvalTrail: buildAssetApprovalTrail(
-                {
-                  ...item,
-                  declinedAt: now,
-                  declinedAtStep: 'Head of Department',
-                },
-                'Declined',
-                now
-              ),
-              progress: getProgressForStatus('Declined'),
-              mode: getModeForStatus('Declined'),
-            }
-          : item
-      )
-    );
-
-    setBanner(`Asset request ${request.id} declined by HOD.`);
-  };
-
   // Amount currently shown for a row (reflects in-progress edits).
   const amountForRow = (row) => parseAmount((draftRows[row.id] || row).Amount);
 
@@ -610,7 +628,7 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
 
     const presentCategories = ASSET_CATEGORIES.filter((category) =>
       request.rows.some((row) => (row['Asset Category'] || '') === category)
-    );
+    ).sort((a, b) => a.localeCompare(b));
 
     return presentCategories.map((category) => {
       const totalBudget = (BUDGET_MATRIX[dept] && BUDGET_MATRIX[dept][category]) || 0;
@@ -640,6 +658,42 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request, assetRequests, draftRows]);
 
+  // Total request amount across all line items.
+  const grandTotal = request.rows.reduce((sum, row) => sum + amountForRow(row), 0);
+
+  // Which categories are over their available budget (for the band flag).
+  const overByCategory = {};
+  categoryBudgets.forEach((c) => {
+    overByCategory[c.category] = c.thisRequisition > c.availableBudget;
+  });
+
+  // Line items sorted and grouped by asset category, with per-group subtotals.
+  const groupedRows = (() => {
+    const map = {};
+    request.rows.forEach((row) => {
+      const cat = row['Asset Category'] || 'Uncategorized';
+      (map[cat] = map[cat] || []).push(row);
+    });
+    return Object.keys(map)
+      .sort((a, b) => a.localeCompare(b))
+      .map((cat) => ({
+        cat,
+        rows: map[cat],
+        subtotal: map[cat].reduce((sum, row) => sum + amountForRow(row), 0),
+        over: !!overByCategory[cat],
+      }));
+  })();
+
+  // Sequential display serial (1..N) in render order, regardless of uploaded values.
+  const serialById = {};
+  let runningSerial = 0;
+  groupedRows.forEach((group) => {
+    group.rows.forEach((row) => {
+      runningSerial += 1;
+      serialById[row.id] = runningSerial;
+    });
+  });
+
   return (
     <div className="page-grid">
       {/* Card 1 — Summary: identity + actions + timeline + key facts + category budgets */}
@@ -647,7 +701,6 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
         <div className="section-heading-row compact">
           <div>
             <h2>Asset Request</h2>
-            <p className="request-id-text">{request.id}</p>
           </div>
           <div className="toolbar-row">
             <button
@@ -664,13 +717,12 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
           </div>
         </div>
 
-        {/* Approval timeline — first glance at status */}
-        <div className="summary-timeline timeline-card-compact">
-          <ApprovalTimeline request={{ ...request, mode: request.mode }} />
-        </div>
-
         {/* Key facts */}
         <div className="quick-details-grid summary-facts">
+          <div className="quick-detail-item">
+            <span className="quick-detail-label">Request ID</span>
+            <span className="quick-detail-value">{request.id}</span>
+          </div>
           <div className="quick-detail-item">
             <span className="quick-detail-label">Fiscal Year</span>
             <span className="quick-detail-value">{request.fiscalYear || getCurrentFiscalYear()}</span>
@@ -685,6 +737,23 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
               {request.status}
             </span>
           </div>
+          {request.companyCode ? (
+            <div className="quick-detail-item">
+              <span className="quick-detail-label">Company Code</span>
+              <span className="quick-detail-value">{request.companyCode}</span>
+            </div>
+          ) : null}
+          {request.costCenter ? (
+            <div className="quick-detail-item">
+              <span className="quick-detail-label">Cost Center</span>
+              <span className="quick-detail-value">{request.costCenter}</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Approval timeline — first glance at status */}
+        <div className="summary-timeline timeline-card-compact">
+          <ApprovalTimeline request={{ ...request, mode: request.mode }} />
         </div>
 
         {/* Category budget overview */}
@@ -694,8 +763,14 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
             <div className="category-budget-grid">
               {categoryBudgets.map((entry) => {
                 const overBudget = entry.thisRequisition > entry.availableBudget;
+                const usedPct =
+                  entry.availableBudget > 0
+                    ? Math.min(100, Math.round((entry.thisRequisition / entry.availableBudget) * 100))
+                    : entry.thisRequisition > 0
+                    ? 100
+                    : 0;
                 return (
-                  <div className="category-budget-card" key={entry.category}>
+                  <div className={`category-budget-card${overBudget ? ' over' : ''}`} key={entry.category}>
                     <div className="category-budget-name">{entry.category}</div>
                     <div className="category-budget-row">
                       <span className="cb-label">Available Budget</span>
@@ -706,6 +781,12 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
                       <span className={`cb-value ${overBudget ? 'danger' : ''}`}>
                         {formatAmount(entry.thisRequisition)}
                       </span>
+                    </div>
+                    <div className="cb-bar" aria-hidden="true">
+                      <div
+                        className={`cb-bar-fill${overBudget ? ' over' : ''}`}
+                        style={{ width: `${usedPct}%` }}
+                      />
                     </div>
                     <div className="category-budget-row cb-foot">
                       <span className="cb-label">Remaining</span>
@@ -724,63 +805,172 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
       {/* Card 2 — Line Items (unchanged) */}
       <section className="content-card">
         <div className="section-heading-row compact">
-          <div>
+          <button
+            type="button"
+            className="collapsible-header"
+            onClick={() => setLineItemsOpen((open) => !open)}
+            aria-expanded={lineItemsOpen}
+          >
             <h2>Asset Line Items</h2>
-          </div>
+            <span className="collapsible-meta">
+              {request.rows.length} item(s) · {groupedRows.length} categor{groupedRows.length === 1 ? 'y' : 'ies'}
+            </span>
+            <span className="line-items-total">
+              <span className="li-total-label">Total</span>
+              <span className="li-total-value">{formatAmount(grandTotal)}</span>
+            </span>
+            <ChevronDown
+              size={20}
+              className={`collapsible-chevron${lineItemsOpen ? ' open' : ''}`}
+            />
+          </button>
         </div>
 
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                {ASSET_DETAIL_COLUMNS.map((column) => (
-                  <th key={column}>{column}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {request.rows.map((row) => {
-                const source = draftRows[row.id] || row;
-                return (
-                  <tr key={row.id}>
-                    {ASSET_DETAIL_COLUMNS.map((column) => (
-                      <td key={`${row.id}-${column}`}>
-                        {column === 'Amount' ? (
-                          isViewOnly || !isEditable ? (
-                            <span>{formatAmount(source[column])}</span>
-                          ) : (
-                            <input
-                              className="cell-input"
-                              value={source[column] ?? ''}
-                              onChange={(event) => updateAmount(row.id, event.target.value)}
-                            />
-                          )
-                        ) : (
-                          <span>{source[column]}</span>
-                        )}
+        {lineItemsOpen ? (
+          <div className="table-scroll">
+            <table className="data-table line-items-table">
+              <colgroup>
+                <col style={{ width: '60px' }} />
+                <col />
+                <col />
+                <col style={{ width: '80px' }} />
+                <col style={{ width: '104px' }} />
+                <col />
+                <col style={{ width: '76px' }} />
+                <col style={{ width: '120px' }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  {ASSET_DETAIL_COLUMNS.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {groupedRows.map((group) => (
+                  <React.Fragment key={group.cat}>
+                    <tr className={`category-band-row${group.over ? ' over' : ''}`}>
+                      <td colSpan={ASSET_DETAIL_COLUMNS.length}>
+                        <div className="category-band">
+                          <span className="cb-band-left">
+                            <Layers size={16} />
+                            <span className="cb-band-name">{group.cat}</span>
+                            <span className="cb-band-count">{group.rows.length} item(s)</span>
+                            {group.over ? <span className="cb-band-over">Over budget</span> : null}
+                          </span>
+                        </div>
                       </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </tr>
+                    {group.rows.map((row) => {
+                      const source = draftRows[row.id] || row;
+                      return (
+                        <tr key={row.id}>
+                          {ASSET_DETAIL_COLUMNS.map((column) => (
+                            <td key={`${row.id}-${column}`}>
+                              {column === 'Serial Number' ? (
+                                <span>{serialById[row.id]}</span>
+                              ) : column === 'Amount' ? (
+                                isViewOnly || !isEditable ? (
+                                  <span>{formatAmount(source[column])}</span>
+                                ) : (
+                                  <input
+                                    className="cell-input"
+                                    value={source[column] ?? ''}
+                                    onChange={(event) => updateAmount(row.id, event.target.value)}
+                                  />
+                                )
+                              ) : (
+                                <span>{source[column]}</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                    <tr className={`category-subtotal-row${group.over ? ' over' : ''}`}>
+                      <td colSpan={ASSET_DETAIL_COLUMNS.length - 1}>
+                        <span className="cb-subtotal-label">{group.cat} subtotal</span>
+                      </td>
+                      <td className="category-subtotal-amount">{formatAmount(group.subtotal)}</td>
+                    </tr>
+                  </React.Fragment>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="grand-total-row">
+                  <td colSpan={ASSET_DETAIL_COLUMNS.length - 1}>Total request amount</td>
+                  <td className="grand-total-amount">{formatAmount(grandTotal)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : null}
 
-        {isEditable ? (
-          <div className="submit-row">
-            <button className="primary-button" onClick={saveAndSendToHOD}>
-              Save Amounts <ArrowRight size={18} />
-            </button>
-            {canApproveByHOD ? (
+        {(isEditable || stage || isAccountantStage) ? (
+          <div className="submit-row approval-controls">
+            {isEditable ? (
+              <button className="primary-button" onClick={saveAndSendToHOD}>
+                Save Amounts <ArrowRight size={18} />
+              </button>
+            ) : null}
+
+            {stage ? (
               <>
-                <button className="secondary-button" onClick={approveByHOD}>
-                  Approve by HOD
+                <button className="primary-button approve-button" onClick={approveCurrentStage}>
+                  <Check size={18} /> Approve by {stage.label}
                 </button>
-                <button className="secondary-button danger-button" onClick={declineByHOD}>
-                  Decline by HOD
+                <button className="secondary-button danger-button" onClick={declineCurrentStage}>
+                  Reject by {stage.label}
                 </button>
               </>
+            ) : null}
+
+            {isAccountantStage ? (
+              <div className="accountant-controls">
+                <div className="accountant-cc-field">
+                  <label htmlFor="company-code-select">
+                    Company Code <span className="req-star">*</span>
+                  </label>
+                  <select
+                    id="company-code-select"
+                    className={companyCode ? 'cc-select' : 'cc-select input-error'}
+                    value={companyCode}
+                    onChange={(ev) => setCompanyCode(ev.target.value)}
+                  >
+                    <option value="">Select a company code…</option>
+                    {COMPANY_CODES.map((cc) => (
+                      <option key={cc} value={cc}>
+                        {cc}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="accountant-cc-field">
+                  <label htmlFor="cost-center-select">
+                    Cost Center <span className="req-star">*</span>
+                  </label>
+                  <select
+                    id="cost-center-select"
+                    className={costCenter ? 'cc-select' : 'cc-select input-error'}
+                    value={costCenter}
+                    onChange={(ev) => setCostCenter(ev.target.value)}
+                  >
+                    <option value="">Select a cost center…</option>
+                    {COST_CENTERS.map((cc) => (
+                      <option key={cc} value={cc}>
+                        {cc}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="primary-button"
+                  onClick={submitByAccountant}
+                  disabled={!companyCode || !costCenter}
+                >
+                  Save <ArrowRight size={18} />
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}

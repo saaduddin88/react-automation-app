@@ -53,6 +53,7 @@ export const getProgressForStatus = (status) => {
   if (status === 'Pending for Director HR/Admin approval') return 4;
   if (status === 'Pending for Finance head approval') return 5;
   if (status === 'Pending for VP Strategy approval') return 6;
+  if (status === 'Pending for Accountant approval') return 7;
   if (status === 'Complete') return 7;
   if (status === 'Declined') return 7;
   return 2;
@@ -138,6 +139,15 @@ export const buildAssetApprovalTrail = (requestLike, status, actedAt = new Date(
     setStep('Head of Department', 'Approved', request.hodApprovedAt || actedAt);
     setStep('Director HR/Admin', 'Approved', request.directorApprovedAt || actedAt);
     setStep('Finance Head', 'Approved', request.financeHeadApprovedAt || actedAt);
+    return trail;
+  }
+
+  if (status === 'Pending for Accountant approval') {
+    setStep('Procurement', 'Completed', request.procurementSavedAt || actedAt);
+    setStep('Head of Department', 'Approved', request.hodApprovedAt || actedAt);
+    setStep('Director HR/Admin', 'Approved', request.directorApprovedAt || actedAt);
+    setStep('Finance Head', 'Approved', request.financeHeadApprovedAt || actedAt);
+    setStep('VP Strategy', 'Approved', request.vpStrategyApprovedAt || actedAt);
     return trail;
   }
 
