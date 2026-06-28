@@ -12,7 +12,9 @@ export const getTodayISO = () => {
 export const formatAmount = (value) => {
   const raw = String(value ?? '').replace(/,/g, '').trim();
   const parsed = parseFloat(raw);
-  return Number.isNaN(parsed) ? '0' : parsed.toLocaleString();
+  return Number.isNaN(parsed)
+    ? '0.00'
+    : parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 
@@ -53,7 +55,7 @@ export const getProgressForStatus = (status) => {
   if (status === 'Pending for Director HR/Admin approval') return 4;
   if (status === 'Pending for Finance head approval') return 5;
   if (status === 'Pending for VP Strategy approval') return 6;
-  if (status === 'Pending for Accountant approval') return 7;
+  if (status === 'Pending for Accountant submission') return 7;
   if (status === 'Complete') return 7;
   if (status === 'Declined') return 7;
   return 2;
@@ -142,7 +144,7 @@ export const buildAssetApprovalTrail = (requestLike, status, actedAt = new Date(
     return trail;
   }
 
-  if (status === 'Pending for Accountant approval') {
+  if (status === 'Pending for Accountant submission') {
     setStep('Procurement', 'Completed', request.procurementSavedAt || actedAt);
     setStep('Head of Department', 'Approved', request.hodApprovedAt || actedAt);
     setStep('Director HR/Admin', 'Approved', request.directorApprovedAt || actedAt);

@@ -26,7 +26,14 @@ function App() {
   const [assetRequests, setAssetRequests] = useState(() => {
     try {
       const saved = localStorage.getItem('assetRequests');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      // Migrate any legacy status label to the current wording so previously
+      // saved requests don't keep showing the old "Accountant approval" text.
+      return parsed.map((request) =>
+        request.status === 'Pending for Accountant approval'
+          ? { ...request, status: 'Pending for Accountant submission' }
+          : request
+      );
     } catch (error) {
       console.error('Failed to parse assetRequests from localStorage:', error);
       return [];

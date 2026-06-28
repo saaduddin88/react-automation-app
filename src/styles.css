@@ -1749,3 +1749,9 @@ button {
   color: var(--primary);
 }
 .line-items-table .category-subtotal-row.over .category-subtotal-amount { color: #c0392b; }
+
+/* Accountant save hint (per-line assignment) */
+.accountant-hint { font-size: 0.82rem; color: var(--text-muted); margin-right: 4px; align-self: center; }
+
+/* ===== Subtotal / grand-total: align label + value to the table's right edge ===== */
+.line-items-table .grand-total-label { text-align: right; }

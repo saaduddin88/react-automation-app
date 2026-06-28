@@ -497,15 +497,40 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
     'Pending for HOD approval': { tsField: 'hodApprovedAt', next: 'Pending for Director HR/Admin approval', step: 'Head of Department', label: 'HOD' },
     'Pending for Director HR/Admin approval': { tsField: 'directorApprovedAt', next: 'Pending for Finance head approval', step: 'Director HR/Admin', label: 'Director' },
     'Pending for Finance head approval': { tsField: 'financeHeadApprovedAt', next: 'Pending for VP Strategy approval', step: 'Finance Head', label: 'Finance Head' },
-    'Pending for VP Strategy approval': { tsField: 'vpStrategyApprovedAt', next: 'Pending for Accountant approval', step: 'VP Strategy', label: 'VP Strategy' },
+    'Pending for VP Strategy approval': { tsField: 'vpStrategyApprovedAt', next: 'Pending for Accountant submission', step: 'VP Strategy', label: 'VP Strategy' },
   };
   const stage = APPROVAL_STAGES[request.status];
-  const isAccountantStage = request.status === 'Pending for Accountant approval';
-  const [costCenter, setCostCenter] = useState(request.costCenter || '');
-  const [companyCode, setCompanyCode] = useState(request.companyCode || '');
-  // Line items are expanded while the list is being built (Procurement) and
-  // collapsed from HOD approval onward; anyone can expand to inspect details.
-  const [lineItemsOpen, setLineItemsOpen] = useState(request.status === 'Pending for Procurement');
+  const isAccountantStage = request.status === 'Pending for Accountant submission';
+  // Line items are expanded on the two stages that require an action inside the
+  // line items themselves — Procurement (entering amounts) and Finance Accountant
+  // (assigning Company Code / Cost Center). On every other stage (approver views)
+  // they start collapsed; anyone can still expand to inspect details.
+  const [lineItemsOpen, setLineItemsOpen] = useState(
+    request.status === 'Pending for Procurement' || isAccountantStage
+  );
+
+  // Effective per-line value (draft edit if present, else stored on the row).
+  const lineValue = (row, field) => {
+    const draft = draftRows[row.id];
+    if (draft && draft[field] !== undefined) return draft[field];
+    return row[field] || '';
+  };
+  // Accountant must assign both Company Code and Cost Center to every line item.
+  const allLinesAssigned = request.rows.every(
+    (row) => lineValue(row, 'companyCode') && lineValue(row, 'costCenter')
+  );
+  // Show the two accountant columns on the accountant's screen and once assigned.
+  const showAccountantCols =
+    isAccountantStage ||
+    request.status === 'Complete' ||
+    request.rows.some((row) => row.companyCode || row.costCenter);
+
+  const updateLineField = (rowId, field, value) => {
+    setDraftRows((current) => ({
+      ...current,
+      [rowId]: { ...(current[rowId] || {}), [field]: value },
+    }));
+  };
 
   const updateAmount = (rowId, value) => {
     setDraftRows((current) => ({
@@ -562,8 +587,8 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
   };
 
   const submitByAccountant = () => {
-    if (!companyCode || !costCenter) {
-      setBanner('Please select both a Company Code and a Cost Center before saving.');
+    if (!allLinesAssigned) {
+      setBanner('Assign a Company Code and Cost Center to every line item before saving.');
       return;
     }
     const now = new Date().toLocaleString();
@@ -571,12 +596,15 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
       (item) => {
         item.status = 'Complete';
         item.financeAccountantCompletedAt = now;
-        item.companyCode = companyCode;
-        item.costCenter = costCenter;
+        item.rows = item.rows.map((r) => ({
+          ...r,
+          companyCode: lineValue(r, 'companyCode'),
+          costCenter: lineValue(r, 'costCenter'),
+        }));
         item.__now = now;
         return item;
       },
-      `Asset request ${request.id} completed — Company Code ${companyCode}, Cost Center ${costCenter}.`
+      `Asset request ${request.id} completed with per-line Company Code and Cost Center.`
     );
   };
 
@@ -694,6 +722,24 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
     });
   });
 
+  // Columns shown in the line-items table (two accountant columns appended when relevant).
+  const ACCOUNTANT_COLUMNS = ['Company Code', 'Cost Center'];
+  const displayColumns = showAccountantCols
+    ? [...ASSET_DETAIL_COLUMNS, ...ACCOUNTANT_COLUMNS]
+    : ASSET_DETAIL_COLUMNS;
+  const COLUMN_WIDTHS = {
+    'Serial Number': '60px',
+    'Asset Name': null,
+    'Asset Description': null,
+    'Fiscal Year': '80px',
+    'Department': '104px',
+    'Asset Category': null,
+    'Quantity': '76px',
+    'Amount': '120px',
+    'Company Code': '150px',
+    'Cost Center': '160px',
+  };
+
   return (
     <div className="page-grid">
       {/* Card 1 — Summary: identity + actions + timeline + key facts + category budgets */}
@@ -737,18 +783,6 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
               {request.status}
             </span>
           </div>
-          {request.companyCode ? (
-            <div className="quick-detail-item">
-              <span className="quick-detail-label">Company Code</span>
-              <span className="quick-detail-value">{request.companyCode}</span>
-            </div>
-          ) : null}
-          {request.costCenter ? (
-            <div className="quick-detail-item">
-              <span className="quick-detail-label">Cost Center</span>
-              <span className="quick-detail-value">{request.costCenter}</span>
-            </div>
-          ) : null}
         </div>
 
         {/* Approval timeline — first glance at status */}
@@ -830,19 +864,22 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
           <div className="table-scroll">
             <table className="data-table line-items-table">
               <colgroup>
-                <col style={{ width: '60px' }} />
-                <col />
-                <col />
-                <col style={{ width: '80px' }} />
-                <col style={{ width: '104px' }} />
-                <col />
-                <col style={{ width: '76px' }} />
-                <col style={{ width: '120px' }} />
+                {displayColumns.map((column) => (
+                  <col
+                    key={column}
+                    style={COLUMN_WIDTHS[column] ? { width: COLUMN_WIDTHS[column] } : undefined}
+                  />
+                ))}
               </colgroup>
               <thead>
                 <tr>
-                  {ASSET_DETAIL_COLUMNS.map((column) => (
-                    <th key={column}>{column}</th>
+                  {displayColumns.map((column) => (
+                    <th key={column}>
+                      {column === 'Serial Number' ? 'S. No#' : column}
+                      {isAccountantStage && ACCOUNTANT_COLUMNS.includes(column) ? (
+                        <span className="req-star"> *</span>
+                      ) : null}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -850,7 +887,7 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
                 {groupedRows.map((group) => (
                   <React.Fragment key={group.cat}>
                     <tr className={`category-band-row${group.over ? ' over' : ''}`}>
-                      <td colSpan={ASSET_DETAIL_COLUMNS.length}>
+                      <td colSpan={displayColumns.length}>
                         <div className="category-band">
                           <span className="cb-band-left">
                             <Layers size={16} />
@@ -865,10 +902,34 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
                       const source = draftRows[row.id] || row;
                       return (
                         <tr key={row.id}>
-                          {ASSET_DETAIL_COLUMNS.map((column) => (
+                          {displayColumns.map((column) => (
                             <td key={`${row.id}-${column}`}>
                               {column === 'Serial Number' ? (
                                 <span>{serialById[row.id]}</span>
+                              ) : column === 'Company Code' || column === 'Cost Center' ? (
+                                isAccountantStage ? (
+                                  (() => {
+                                    const field = column === 'Company Code' ? 'companyCode' : 'costCenter';
+                                    const options = column === 'Company Code' ? COMPANY_CODES : COST_CENTERS;
+                                    const value = lineValue(row, field);
+                                    return (
+                                      <select
+                                        className={value ? 'cell-input' : 'cell-input input-error'}
+                                        value={value}
+                                        onChange={(event) => updateLineField(row.id, field, event.target.value)}
+                                      >
+                                        <option value="">Select…</option>
+                                        {options.map((opt) => (
+                                          <option key={opt} value={opt}>
+                                            {opt}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    );
+                                  })()
+                                ) : (
+                                  <span>{lineValue(row, column === 'Company Code' ? 'companyCode' : 'costCenter') || '—'}</span>
+                                )
                               ) : column === 'Amount' ? (
                                 isViewOnly || !isEditable ? (
                                   <span>{formatAmount(source[column])}</span>
@@ -888,7 +949,7 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
                       );
                     })}
                     <tr className={`category-subtotal-row${group.over ? ' over' : ''}`}>
-                      <td colSpan={ASSET_DETAIL_COLUMNS.length - 1}>
+                      <td colSpan={displayColumns.length - 1}>
                         <span className="cb-subtotal-label">{group.cat} subtotal</span>
                       </td>
                       <td className="category-subtotal-amount">{formatAmount(group.subtotal)}</td>
@@ -898,7 +959,7 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
               </tbody>
               <tfoot>
                 <tr className="grand-total-row">
-                  <td colSpan={ASSET_DETAIL_COLUMNS.length - 1}>Total request amount</td>
+                  <td className="grand-total-label" colSpan={displayColumns.length - 1}>Total request amount</td>
                   <td className="grand-total-amount">{formatAmount(grandTotal)}</td>
                 </tr>
               </tfoot>
@@ -927,46 +988,15 @@ export function AssetRequestDetailsPage({ assetRequests, setAssetRequests, setBa
 
             {isAccountantStage ? (
               <div className="accountant-controls">
-                <div className="accountant-cc-field">
-                  <label htmlFor="company-code-select">
-                    Company Code <span className="req-star">*</span>
-                  </label>
-                  <select
-                    id="company-code-select"
-                    className={companyCode ? 'cc-select' : 'cc-select input-error'}
-                    value={companyCode}
-                    onChange={(ev) => setCompanyCode(ev.target.value)}
-                  >
-                    <option value="">Select a company code…</option>
-                    {COMPANY_CODES.map((cc) => (
-                      <option key={cc} value={cc}>
-                        {cc}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="accountant-cc-field">
-                  <label htmlFor="cost-center-select">
-                    Cost Center <span className="req-star">*</span>
-                  </label>
-                  <select
-                    id="cost-center-select"
-                    className={costCenter ? 'cc-select' : 'cc-select input-error'}
-                    value={costCenter}
-                    onChange={(ev) => setCostCenter(ev.target.value)}
-                  >
-                    <option value="">Select a cost center…</option>
-                    {COST_CENTERS.map((cc) => (
-                      <option key={cc} value={cc}>
-                        {cc}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {!allLinesAssigned ? (
+                  <span className="accountant-hint">
+                    Assign a Company Code and Cost Center to every line item.
+                  </span>
+                ) : null}
                 <button
                   className="primary-button"
                   onClick={submitByAccountant}
-                  disabled={!companyCode || !costCenter}
+                  disabled={!allLinesAssigned}
                 >
                   Save <ArrowRight size={18} />
                 </button>
